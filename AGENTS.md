@@ -16,9 +16,9 @@ This is **not** a standalone app with its own login. It is one ERP module in a *
 - **No separate deployment/auth stack of its own.** Skip Railway/Vercel-as-separate-product framing — this service just needs a `targetUrl` reachable by ERPHUB's proxy, registered in `K-ERPHub`'s `src/config/modules.json` (`{ key: "stock", name, icon, targetUrl }`) plus `allowedModules` on the relevant users.
 - Portfolio framing (recruiter-facing README, ER diagrams, etc.) is still fine to keep — it just needs to describe a module that plugs into an existing gateway, not a self-contained product with its own auth.
 
-## Repo layout (3 sibling repos under one parent folder, e.g. `K-ERP/`)
+## Repo layout (backend + frontend must be sibling folders, e.g. `K-ERP/Stock and purchase/`)
 
-- `K-ERPHub/` — auth hub + reverse proxy (issues the JWT)
+- `K-ERPHub/` — auth hub + reverse proxy (issues the JWT); separate repo, only reached over HTTP (`targetUrl`), so its location doesn't matter
 - `Stock-Purchase-Backend/` — this repo
 - `Stock-Purchase-Frontend/` — the SPA; its Vite dev server reads this repo's `.env` (`JWT_SECRET`) via `../Stock-Purchase-Backend/.env` (override with `BACKEND_ENV_PATH`)
 ## Architecture
