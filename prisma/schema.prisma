@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  sku          String   @unique
+  name         String
+  unit         String
+  cost         Int // minor currency unit (satang)
+  reorderPoint Int      @default(0)
+  reorderQty   Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  purchaseOrderLines PurchaseOrderLine[]
+  stockMovements     StockMovement[]
+
+  @@map("products")
+}
+
+model Supplier {
+  id            String   @id @default(cuid())
+  name          String
+  contactInfo   String?
+  leadTimeDays  Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT
+  PARTIALLY_RECEIVED
+  COMPLETED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id          String              @id @default(cuid())
+  poNumber    String              @unique
+  supplierId  String
+  supplier    Supplier            @relation(fields: [supplierId], references: [id])
+  status      PurchaseOrderStatus @default(DRAFT)
+  totalAmount Int // minor currency unit (satang), sum of line qtyOrdered * unitCost
+  createdBy   String // JWT `sub` of the user who created it
+  approvedBy  String? // JWT `sub` of the approver
+  approvedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  lines          PurchaseOrderLine[]
+  goodsReceipts  GoodsReceipt[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id           String        @id @default(cuid())
+  poId         String
+  purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product       @relation(fields: [productId], references: [id])
+  qtyOrdered   Int
+  qtyReceived  Int           @default(0)
+  unitCost     Int // minor currency unit (satang)
+
+  goodsReceiptLines GoodsReceiptLine[]
+
+  @@map("purchase_order_lines")
+}
+
+model GoodsReceipt {
+  id         String        @id @default(cuid())
+  poId       String
+  purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id])
+  receivedBy String // JWT `sub`
+  receivedAt DateTime      @default(now())
+  note       String?
+
+  lines GoodsReceiptLine[]
+
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptLine {
+  id          String       @id @default(cuid())
+  receiptId   String
+  receipt     GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  poLineId    String
+  poLine      PurchaseOrderLine @relation(fields: [poLineId], references: [id])
+  qtyReceived Int
+
+  @@map("goods_receipt_lines")
+}
+
+enum StockMovementType {
+  RECEIPT
+  ISSUE
+  ADJUSTMENT
+}
+
+// Append-only audit ledger. Never UPDATE or DELETE a row here — on-hand
+// balance is always derived by summing `quantity` for a product, never
+// stored/edited directly. `quantity` is signed: positive increases stock,
+// negative decreases it.
+model StockMovement {
+  id             String            @id @default(cuid())
+  productId      String
+  product        Product           @relation(fields: [productId], references: [id])
+  type           StockMovementType
+  quantity       Int
+  balanceBefore  Int
+  balanceAfter   Int
+  refType        String // e.g. "GOODS_RECEIPT", "ADJUSTMENT"
+  refId          String?
+  createdBy      String // JWT `sub`
+  createdAt      DateTime          @default(now())
+
+  @@index([productId, createdAt])
+  @@map("stock_movements")
+}
