@@ -9,6 +9,7 @@ import { inventoryRouter } from "./modules/inventory/inventory.routes.js";
 import { purchaseOrderRouter } from "./modules/purchase-order/purchase-order.routes.js";
 import { goodsReceiptRouter } from "./modules/goods-receipt/goods-receipt.routes.js";
 import { reportingRouter } from "./modules/reporting/reporting.routes.js";
+import { outboxRouter } from "./shared/outbox/outbox.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,7 @@ app.use("/api/inventory", inventoryRouter);
 app.use("/api/purchase-orders", purchaseOrderRouter);
 app.use("/api/goods-receipts", goodsReceiptRouter);
 app.use("/api/reports", reportingRouter);
+app.use("/api/outbox", outboxRouter);
 
 // Serve the built SPA from the sibling Stock-Purchase-Frontend repo (override the
 // location with FRONTEND_DIST). Anything that isn't /health or

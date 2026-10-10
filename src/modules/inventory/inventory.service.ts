@@ -1,6 +1,8 @@
 import type { Prisma, StockMovementType } from "@prisma/client";
 import { prisma } from "../../shared/database/prisma.js";
 import { AppError } from "../../shared/middleware/error-handler.js";
+import { enqueue } from "../../shared/outbox/outbox.service.js";
+import { stockAdjustedEvent } from "../accounting-integration/events.js";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -68,4 +70,36 @@ export async function listLowStock() {
     }))
   );
   return balances.filter(({ product, balance }) => balance <= product.reorderPoint);
+}
+
+// Manual stock correction (e.g. cycle count). Goes through the same ledger as every other
+// movement, and writes the Accounting event in the same transaction.
+export async function adjustStock(input: {
+  productId: string;
+  quantity: number; // signed, non-zero
+  reason: string;
+  createdBy: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const movement = await postStockMovement(tx, {
+      productId: input.productId,
+      quantity: input.quantity,
+      type: "ADJUSTMENT",
+      refType: "ADJUSTMENT",
+      refId: input.reason,
+      createdBy: input.createdBy,
+    });
+    const product = await tx.product.findUniqueOrThrow({ where: { id: input.productId } });
+    const event = stockAdjustedEvent({
+      movementId: movement.id,
+      productId: product.id,
+      sku: product.sku,
+      quantity: input.quantity,
+      unitCost: product.cost,
+      reason: input.reason,
+      occurredAt: movement.createdAt,
+    });
+    if (event) await enqueue(tx, event);
+    return movement;
+  });
 }

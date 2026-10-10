@@ -131,3 +131,30 @@ model StockMovement {
   @@index([productId, createdAt])
   @@map("stock_movements")
 }
+
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// Generic transactional outbox, shared by every integration (accounting now, notifications
+// later). One row = one event x one destination, written in the SAME transaction as the
+// business change, so an event can neither be lost nor emitted for a rolled-back change.
+// A worker delivers PENDING rows; see src/shared/outbox/.
+model OutboxMessage {
+  id          String       @id @default(cuid())
+  topic       String // GOODS_RECEIVED | STOCK_ADJUSTED | OPENING_BALANCE | ...
+  destination String // "accounting" | "notify:email" | "notify:line"
+  dedupeKey   String       @unique // e.g. "accounting:GOODS_RECEIPT:<receiptId>"
+  payload     Json // always carries { version, occurredAt, ... }
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  lastError   String?
+  nextAt      DateTime     @default(now())
+  sentAt      DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([status, destination, nextAt])
+  @@map("outbox_messages")
+}

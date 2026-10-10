@@ -2,8 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../auth/auth.middleware.js";
 import { asyncHandler } from "../../shared/middleware/error-handler.js";
-import { prisma } from "../../shared/database/prisma.js";
-import { getStockBalance, listLowStock, postStockMovement } from "./inventory.service.js";
+import { adjustStock, getStockBalance, listLowStock } from "./inventory.service.js";
 
 export const inventoryRouter = Router();
 inventoryRouter.use(requireAuth);
@@ -46,16 +45,12 @@ inventoryRouter.post(
   requireRole("Admin", "Warehouse Staff"),
   asyncHandler(async (req, res) => {
     const input = adjustmentSchema.parse(req.body);
-    const movement = await prisma.$transaction((tx) =>
-      postStockMovement(tx, {
-        productId: input.productId,
-        quantity: input.quantity,
-        type: "ADJUSTMENT",
-        refType: "ADJUSTMENT",
-        refId: input.reason,
-        createdBy: req.user!.sub,
-      })
-    );
+    const movement = await adjustStock({
+      productId: input.productId,
+      quantity: input.quantity,
+      reason: input.reason,
+      createdBy: req.user!.sub,
+    });
     res.status(201).json(movement);
   })
 );

@@ -40,9 +40,11 @@ src/
     goods-receipt/      # receiving against a PO, partial receipt handling
     inventory/           # stock balance, stock movement ledger, valuation
     reporting/           # dashboard aggregates, stock card, exports
+    accounting-integration/  # builds the events Accounting understands (pure functions, no DB)
   shared/
     database/
     middleware/
+    outbox/              # transactional outbox + worker: delivers events to other modules (Accounting)
     utils/
 ```
 
@@ -99,9 +101,9 @@ src/
 ## Out of Scope (don't build these — keep scope tight)
 
 - Multi-warehouse / multi-location stock (mention as a "future work" item instead)
-- Microservices, message queues, service mesh
+- Microservices, message brokers (Kafka/RabbitMQ), service mesh — the DB-table outbox above is deliberately NOT a broker
 - Multi-currency, multi-tenant
-- Full accounting/GL integration (that's a separate module — see the accounting-module idea if this one is finished early)
+- The General Ledger itself (it is the separate `Accounting` module). Stock only *emits* events for it — goods receipts and stock adjustments are written to `outbox_messages` in the same transaction and delivered by `shared/outbox` (set `ACCOUNTING_URL` + `ACCOUNTING_SERVICE_KEY`; unset = events wait). Never call Accounting inline from a request, and never read its database
 
 ## Working with an AI coding agent on this repo
 

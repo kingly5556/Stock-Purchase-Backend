@@ -1,5 +1,7 @@
 import { prisma } from "../../shared/database/prisma.js";
 import { AppError } from "../../shared/middleware/error-handler.js";
+import { enqueue } from "../../shared/outbox/outbox.service.js";
+import { goodsReceivedEvent } from "../accounting-integration/events.js";
 import { postStockMovement } from "../inventory/inventory.service.js";
 
 export type ReceiveInput = {
@@ -82,6 +84,20 @@ export async function receiveGoodsAgainstPO(input: ReceiveInput) {
         createdBy: input.receivedBy,
       });
     }
+
+    // Accounting event, written in THIS transaction (transactional outbox): it exists if
+    // and only if the receipt and its stock movements commit. Delivery happens later.
+    const event = goodsReceivedEvent({
+      goodsReceiptId: receipt.id,
+      poId: po.id,
+      poNumber: po.poNumber,
+      occurredAt: receipt.receivedAt,
+      lines: input.lines.map((l) => ({
+        qtyReceived: l.qtyReceived,
+        unitCost: linesById.get(l.poLineId)!.unitCost,
+      })),
+    });
+    if (event) await enqueue(tx, event);
 
     const updatedLines = await tx.purchaseOrderLine.findMany({ where: { poId: po.id } });
     const fullyReceived = updatedLines.every((line) => line.qtyReceived >= line.qtyOrdered);
