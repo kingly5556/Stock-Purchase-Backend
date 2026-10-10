@@ -4,6 +4,9 @@ import type { SessionPayload } from "./types.js";
 
 const encoder = new TextEncoder();
 
+// Must match this module's `key` in ERPHUB's src/config/modules.json.
+const MODULE_KEY = "stock";
+
 function getSecretKey() {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -36,6 +39,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const { payload } = await jwtVerify(token, getSecretKey());
     if (!isSessionPayload(payload)) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!payload.allowedModules.includes(MODULE_KEY)) {
+      return res.status(403).json({ error: "Forbidden" });
     }
     req.user = payload;
     return next();
