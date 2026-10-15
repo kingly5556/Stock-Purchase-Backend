@@ -21,7 +21,17 @@ npm run prisma:seed      # demo products/supplier/POs
 npm run dev              # listens on :4001 (see PORT in .env)
 ```
 
-Health check: `GET http://localhost:4001/health`.
+Health check: `GET http://localhost:4001/health`. Add `?deep=1` to also check the database (`{"ok":true,"db":"ok","commit":"..."}`, or 503 when the database is down).
+
+### Demo data
+
+`npm run prisma:seed` creates a minimal data set for development. For the public demo use
+`npm run demo:seed` on a freshly migrated database: it creates an IT-equipment shop (10 products,
+3 fictitious suppliers, 6 POs covering every status, receipts and one stock adjustment) **through
+the service layer**, so stock movements and outbox events are real. Once the outbox worker has
+delivered the 3 events, GL account 1300 in Accounting equals the stock value: 91,050.00 THB.
+`npm run outbox:wait` exits 0 when every accounting event has been delivered (used by the nightly
+demo reset).
 
 Every other route requires `Authorization: Bearer <jwt>` signed by ERPHUB
 (`src/lib/auth/jwt.ts` in the root app) with `JWT_SECRET` shared between the
@@ -66,7 +76,9 @@ any non-`/api/*` GET falling through to `index.html` — see `src/app.ts`).
 npm test
 ```
 
-Currently covers the PO status state machine (`po-status.test.ts`). The
+Currently covers the PO status state machine (`po-status.test.ts`). `po-number.integration.test.ts` checks that 20 concurrent PO creations get 20 distinct,
+consecutive numbers and that oversized totals are rejected with 400; it runs only when
+`INTEGRATION_DATABASE_URL` points at a disposable `*_test` database. The
 ledger's concurrency guarantee (`SELECT ... FOR UPDATE` in
 `inventory.service.ts`) needs a real Postgres instance to exercise properly —
 add an integration test against the Docker Postgres above before relying on
