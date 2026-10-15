@@ -111,6 +111,16 @@ enum StockMovementType {
   ADJUSTMENT
 }
 
+// Gap-free document numbering (e.g. "PO-2026" -> last issued 37). Incremented with
+// INSERT ... ON CONFLICT DO UPDATE ... RETURNING inside the same transaction that
+// creates the document, so concurrent requests never get the same number.
+model DocumentCounter {
+  key   String @id
+  value Int
+
+  @@map("document_counters")
+}
+
 // Append-only audit ledger. Never UPDATE or DELETE a row here — on-hand
 // balance is always derived by summing `quantity` for a product, never
 // stored/edited directly. `quantity` is signed: positive increases stock,

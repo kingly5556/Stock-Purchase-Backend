@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/database/prisma.js";
 import { AppError } from "../../shared/middleware/error-handler.js";
 import { assertTransition } from "./po-status.js";
@@ -13,10 +14,23 @@ export type CreatePOInput = {
   lines: { productId: string; qtyOrdered: number; unitCost: number }[];
 };
 
-async function generatePoNumber(): Promise<string> {
-  const count = await prisma.purchaseOrder.count();
-  const year = new Date().getFullYear();
-  return `PO-${year}-${String(count + 1).padStart(5, "0")}`;
+// Prisma `Int` is 32-bit: keep totals well below 2,147,483,647 satang (~21.47M THB).
+export const MAX_PO_TOTAL_SATANG = 2_000_000_000; // 20,000,000 THB
+
+/** Year in Bangkok time (UTC+7), so a PO created at 00:30 on 1 January gets the new year. */
+function bangkokYear(now: Date): number {
+  return new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCFullYear();
+}
+
+// Row-locked counter: the upsert takes a row lock, so two concurrent transactions
+// cannot read the same value (the old count()+1 could, and then hit the unique index).
+async function generatePoNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const key = `PO-${bangkokYear(new Date())}`;
+  const [row] = await tx.$queryRaw<{ value: number }[]>`
+    INSERT INTO "document_counters" ("key", "value") VALUES (${key}, 1)
+    ON CONFLICT ("key") DO UPDATE SET "value" = "document_counters"."value" + 1
+    RETURNING "value"`;
+  return `${key}-${String(row.value).padStart(5, "0")}`;
 }
 
 export async function createPurchaseOrder(input: CreatePOInput) {
@@ -27,24 +41,29 @@ export async function createPurchaseOrder(input: CreatePOInput) {
     (sum, line) => sum + line.qtyOrdered * line.unitCost,
     0
   );
-  const poNumber = await generatePoNumber();
+  if (totalAmount > MAX_PO_TOTAL_SATANG) {
+    throw new AppError(400, "Purchase order total exceeds 20,000,000 THB");
+  }
 
-  return prisma.purchaseOrder.create({
-    data: {
-      poNumber,
-      supplierId: input.supplierId,
-      createdBy: input.createdBy,
-      totalAmount,
-      status: "DRAFT",
-      lines: {
-        create: input.lines.map((line) => ({
-          productId: line.productId,
-          qtyOrdered: line.qtyOrdered,
-          unitCost: line.unitCost,
-        })),
+  return prisma.$transaction(async (tx) => {
+    const poNumber = await generatePoNumber(tx);
+    return tx.purchaseOrder.create({
+      data: {
+        poNumber,
+        supplierId: input.supplierId,
+        createdBy: input.createdBy,
+        totalAmount,
+        status: "DRAFT",
+        lines: {
+          create: input.lines.map((line) => ({
+            productId: line.productId,
+            qtyOrdered: line.qtyOrdered,
+            unitCost: line.unitCost,
+          })),
+        },
       },
-    },
-    include: { lines: true },
+      include: { lines: true },
+    });
   });
 }
 
