@@ -44,8 +44,8 @@ const createPOSchema = z.object({
     .array(
       z.object({
         productId: z.string(),
-        qtyOrdered: z.number().int().positive(),
-        unitCost: z.number().int().nonnegative(),
+        qtyOrdered: z.number().int().positive().max(100_000),
+        unitCost: z.number().int().nonnegative().max(100_000_000), // satang: up to 1,000,000 THB per unit
       })
     )
     .min(1),
