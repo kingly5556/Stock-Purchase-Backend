@@ -1,0 +1,58 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+// Runs only against a real, migrated, DISPOSABLE Postgres database:
+//   INTEGRATION_DATABASE_URL=postgresql://.../k_erp_stock_test npm test
+// (skipped in the normal unit-test run). It creates its own product and leaves it behind.
+const url = process.env.INTEGRATION_DATABASE_URL;
+
+const OPENING_STOCK = 30;
+const CONCURRENT_ISSUES = 50;
+
+describe.skipIf(!url)("stock movements under concurrency", () => {
+  let prisma: typeof import("../../shared/database/prisma.js").prisma;
+  let adjustStock: typeof import("./inventory.service.js").adjustStock;
+  let getStockBalance: typeof import("./inventory.service.js").getStockBalance;
+
+  beforeAll(async () => {
+    if (!/_test(\?|$)/.test(url!)) throw new Error("INTEGRATION_DATABASE_URL must point to a *_test database");
+    process.env.DATABASE_URL = url;
+    ({ prisma } = await import("../../shared/database/prisma.js"));
+    ({ adjustStock, getStockBalance } = await import("./inventory.service.js"));
+  });
+
+  afterAll(async () => {
+    await prisma?.$disconnect();
+  });
+
+  it(`lets exactly ${OPENING_STOCK} of ${CONCURRENT_ISSUES} concurrent issues through and never goes negative`, async () => {
+    const product = await prisma.product.create({
+      data: { sku: `CONC-${Date.now()}`, name: "concurrency test", unit: "pcs", cost: 100 },
+    });
+    await adjustStock({ productId: product.id, quantity: OPENING_STOCK, reason: "opening", createdBy: "test" });
+
+    const results = await Promise.allSettled(
+      Array.from({ length: CONCURRENT_ISSUES }, (_, i) =>
+        adjustStock({ productId: product.id, quantity: -1, reason: `issue-${i}`, createdBy: "test" })
+      )
+    );
+
+    const ok = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(ok).toHaveLength(OPENING_STOCK);
+    expect(rejected).toHaveLength(CONCURRENT_ISSUES - OPENING_STOCK);
+    for (const r of rejected) expect(r.reason).toMatchObject({ status: 409 });
+
+    expect(await getStockBalance(product.id)).toBe(0);
+
+    // The ledger is a single chain: every issue starts where the previous one ended.
+    const issues = await prisma.stockMovement.findMany({
+      where: { productId: product.id, quantity: -1 },
+      orderBy: { balanceBefore: "desc" },
+    });
+    expect(issues.map((m) => m.balanceBefore)).toEqual(
+      Array.from({ length: OPENING_STOCK }, (_, i) => OPENING_STOCK - i)
+    );
+    expect(new Set(issues.map((m) => m.balanceAfter)).size).toBe(OPENING_STOCK);
+    expect(issues.every((m) => m.balanceAfter === m.balanceBefore - 1)).toBe(true);
+  });
+});
