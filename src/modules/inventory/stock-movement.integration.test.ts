@@ -13,6 +13,7 @@ describe.skipIf(!url)("stock movements under concurrency", () => {
   let adjustStock: typeof import("./inventory.service.js").adjustStock;
   let getStockBalance: typeof import("./inventory.service.js").getStockBalance;
   let receiveGoodsAgainstPO: typeof import("../goods-receipt/goods-receipt.service.js").receiveGoodsAgainstPO;
+  let poService: typeof import("../purchase-order/purchase-order.service.js");
 
   beforeAll(async () => {
     if (!/_test(\?|$)/.test(url!)) throw new Error("INTEGRATION_DATABASE_URL must point to a *_test database");
@@ -20,6 +21,7 @@ describe.skipIf(!url)("stock movements under concurrency", () => {
     ({ prisma } = await import("../../shared/database/prisma.js"));
     ({ adjustStock, getStockBalance } = await import("./inventory.service.js"));
     ({ receiveGoodsAgainstPO } = await import("../goods-receipt/goods-receipt.service.js"));
+    poService = await import("../purchase-order/purchase-order.service.js");
   });
 
   afterAll(async () => {
@@ -91,5 +93,36 @@ describe.skipIf(!url)("stock movements under concurrency", () => {
     expect(line.qtyReceived).toBe(9);
     expect(await getStockBalance(product.id)).toBe(9);
     expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).status).toBe("PARTIALLY_RECEIVED");
+  });
+
+  it("lets only one of several concurrent status changes on a PO win", async () => {
+    const product = await prisma.product.create({
+      data: { sku: `CONC-PO-${Date.now()}`, name: "status race", unit: "pcs", cost: 100 },
+    });
+    const supplier = await prisma.supplier.create({ data: { name: "status race supplier" } });
+    const po = await prisma.purchaseOrder.create({
+      data: {
+        poNumber: `TEST-ST-${Date.now()}`,
+        supplierId: supplier.id,
+        status: "APPROVED",
+        totalAmount: 100,
+        createdBy: "test",
+        lines: { create: [{ productId: product.id, qtyOrdered: 1, unitCost: 100 }] },
+      },
+    });
+
+    // 3 sends and 3 cancels at once: exactly one action may succeed.
+    const results = await Promise.allSettled([
+      ...Array.from({ length: 3 }, () => poService.sendPurchaseOrder(po.id)),
+      ...Array.from({ length: 3 }, () => poService.cancelPurchaseOrder(po.id)),
+    ]);
+
+    const ok = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    expect(ok).toHaveLength(1);
+    for (const r of results.filter((r): r is PromiseRejectedResult => r.status === "rejected")) {
+      expect(r.reason).toMatchObject({ status: 409 });
+    }
+    const final = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } });
+    expect(final.status).toBe(ok[0].status);
   });
 });

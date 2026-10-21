@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PurchaseOrderStatus } from "@prisma/client";
 import { prisma } from "../../shared/database/prisma.js";
 import { AppError } from "../../shared/middleware/error-handler.js";
 import { assertTransition } from "./po-status.js";
@@ -67,6 +67,20 @@ export async function createPurchaseOrder(input: CreatePOInput) {
   });
 }
 
+// Compare-and-set: the write only applies if the PO is still in the status we checked, so two
+// concurrent actions on one PO cannot both succeed (e.g. a cancel racing a goods receipt).
+async function updateIfStatus(
+  poId: string,
+  expected: PurchaseOrderStatus,
+  data: Prisma.PurchaseOrderUpdateManyMutationInput
+) {
+  const { count } = await prisma.purchaseOrder.updateMany({ where: { id: poId, status: expected }, data });
+  if (count === 0) {
+    throw new AppError(409, "Purchase order was changed by someone else; reload and try again");
+  }
+  return prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
+}
+
 // Submitting moves a PO out of DRAFT. Orders at/under the approval threshold
 // skip the approval step and go straight to APPROVED; orders above it need
 // an explicit approve() call from a Manager-capable role before they can be
@@ -77,33 +91,28 @@ export async function submitPurchaseOrder(poId: string) {
   const nextStatus = po.totalAmount > threshold ? "PENDING_APPROVAL" : "APPROVED";
   assertTransition(po.status, nextStatus);
 
-  return prisma.purchaseOrder.update({
-    where: { id: poId },
-    data:
-      nextStatus === "APPROVED"
-        ? { status: nextStatus, approvedBy: null, approvedAt: null }
-        : { status: nextStatus },
-  });
+  return updateIfStatus(
+    poId,
+    po.status,
+    nextStatus === "APPROVED" ? { status: nextStatus, approvedBy: null, approvedAt: null } : { status: nextStatus }
+  );
 }
 
 export async function approvePurchaseOrder(poId: string, approvedBy: string) {
   const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
   assertTransition(po.status, "APPROVED");
 
-  return prisma.purchaseOrder.update({
-    where: { id: poId },
-    data: { status: "APPROVED", approvedBy, approvedAt: new Date() },
-  });
+  return updateIfStatus(poId, po.status, { status: "APPROVED", approvedBy, approvedAt: new Date() });
 }
 
 export async function sendPurchaseOrder(poId: string) {
   const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
   assertTransition(po.status, "SENT");
-  return prisma.purchaseOrder.update({ where: { id: poId }, data: { status: "SENT" } });
+  return updateIfStatus(poId, po.status, { status: "SENT" });
 }
 
 export async function cancelPurchaseOrder(poId: string) {
   const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
   assertTransition(po.status, "CANCELLED");
-  return prisma.purchaseOrder.update({ where: { id: poId }, data: { status: "CANCELLED" } });
+  return updateIfStatus(poId, po.status, { status: "CANCELLED" });
 }
