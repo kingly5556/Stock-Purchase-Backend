@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Runs only against a real, migrated, DISPOSABLE Postgres database:
 //   INTEGRATION_DATABASE_URL=postgresql://.../k_erp_stock_test npm test
-// (skipped in the normal unit-test run). It deletes all POs in that database.
+// (skipped in the normal unit-test run). It deletes all POs and goods receipts in that database.
 const url = process.env.INTEGRATION_DATABASE_URL;
 
 describe.skipIf(!url)("PO numbers under concurrency", () => {
@@ -14,6 +14,8 @@ describe.skipIf(!url)("PO numbers under concurrency", () => {
     process.env.DATABASE_URL = url;
     ({ prisma } = await import("../../shared/database/prisma.js"));
     ({ createPurchaseOrder } = await import("./purchase-order.service.js"));
+    await prisma.goodsReceiptLine.deleteMany();
+    await prisma.goodsReceipt.deleteMany();
     await prisma.purchaseOrderLine.deleteMany();
     await prisma.purchaseOrder.deleteMany();
     await prisma.documentCounter.deleteMany();
