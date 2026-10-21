@@ -1,0 +1,74 @@
+name: Load test
+
+# Manual only: Actions -> Load test -> Run workflow. Runs the API and Postgres on the
+# GitHub runner (never against the public demo) and writes the results to the job summary.
+on:
+  workflow_dispatch:
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: k_erp_stock_load
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/k_erp_stock_load
+      # Throwaway value used only inside this job; not the demo's secret.
+      JWT_SECRET: load-test-only-${{ github.run_id }}-${{ github.run_attempt }}
+      OUTBOX_WORKER: "off"
+      PORT: "4001"
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
+      - run: npx prisma migrate deploy
+      - run: npx tsx prisma/seed.ts
+      - name: Start the API
+        run: |
+          node dist/server.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:4001/health && break; sleep 1; done
+      - name: Test token and product
+        run: |
+          TOKEN=$(node --input-type=module -e "import {SignJWT} from 'jose'; console.log(await new SignJWT({username:'k6',roles:['Warehouse Staff'],allowedModules:['stock']}).setProtectedHeader({alg:'HS256'}).setSubject('k6').setExpirationTime('1h').sign(new TextEncoder().encode(process.env.JWT_SECRET)))")
+          echo "::add-mask::$TOKEN"
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "PRODUCT_ID=$(psql -h localhost -U postgres -d k_erp_stock_load -tAc "select id from products where sku='WID-A'")" >> "$GITHUB_ENV"
+      - uses: grafana/setup-k6-action@v1
+      - name: Run k6 (50 users, 30 s, same product)
+        run: k6 run --summary-export=k6-summary.json loadtest/adjustments.js
+      - name: Check the ledger after the run
+        if: always()
+        run: |
+          Q() { psql -h localhost -U postgres -d k_erp_stock_load -tAc "$1"; }
+          {
+            echo "## Ledger check after the load test"
+            echo "| Check | Value |"
+            echo "|---|---|"
+            echo "| Movements written for the product | $(Q "select count(*) from stock_movements where \"productId\"='$PRODUCT_ID'") |"
+            echo "| Sum of quantities | $(Q "select coalesce(sum(quantity),0) from stock_movements where \"productId\"='$PRODUCT_ID'") |"
+            echo "| Latest balanceAfter | $(Q "select \"balanceAfter\" from stock_movements where \"productId\"='$PRODUCT_ID' order by \"balanceAfter\" desc limit 1") |"
+            echo "| Duplicate balanceBefore values | $(Q "select count(*) from (select \"balanceBefore\" from stock_movements where \"productId\"='$PRODUCT_ID' group by 1 having count(*) > 1) d") |"
+            echo "| Rows where balanceAfter != balanceBefore + quantity | $(Q "select count(*) from stock_movements where \"productId\"='$PRODUCT_ID' and \"balanceAfter\" <> \"balanceBefore\" + quantity") |"
+            echo
+            echo "## k6 summary"
+            node -e "const s=require('./k6-summary.json').metrics;const d=s.http_req_duration,r=s.http_reqs,f=s.http_req_failed;console.log('| Metric | Value |\n|---|---|');console.log('| Requests | '+r.count+' ('+r.rate.toFixed(1)+'/s) |');console.log('| Failed | '+(f.value*100).toFixed(2)+'% |');for(const k of ['avg','med','p(90)','p(95)','max'])console.log('| Latency '+k+' | '+d[k].toFixed(1)+' ms |')"
+            echo
+            echo "Runner: GitHub-hosted ubuntu-latest; Postgres 16 (service container); Node 22; outbox worker off."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results
+          path: |
+            k6-summary.json
+            server.log
