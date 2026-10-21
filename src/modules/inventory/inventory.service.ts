@@ -33,7 +33,7 @@ export type PostMovementInput = {
 export async function postStockMovement(tx: TxClient, input: PostMovementInput) {
   const locked = await tx.$queryRaw<
     { id: string }[]
-  >`SELECT id FROM products WHERE id = ${input.productId} FOR UPDATE`;
+  >`SELECT id FROM products WHERE id = ${input.productId}`;
   if (locked.length === 0) {
     throw new AppError(404, `Product ${input.productId} not found`);
   }

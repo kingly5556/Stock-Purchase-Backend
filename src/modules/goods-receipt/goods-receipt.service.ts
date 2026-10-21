@@ -24,7 +24,7 @@ export async function receiveGoodsAgainstPO(input: ReceiveInput) {
   return prisma.$transaction(async (tx) => {
     // Lock the PO first: two receipts against the same PO must not both read the old
     // qtyReceived and together receive more than was ordered.
-    await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${input.poId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${input.poId}`;
     const po = await tx.purchaseOrder.findUnique({
       where: { id: input.poId },
       include: { lines: true },
