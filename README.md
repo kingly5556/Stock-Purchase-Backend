@@ -1,9 +1,21 @@
 # Stock & Purchase Order module — backend
 
+**[Live demo](https://k-erp-hub.vercel.app)** · Part of **[K-ERP](https://github.com/kingly5556/K-ERP)** (overview, architecture, test results)
+
+[![CI](https://github.com/kingly5556/Stock-Purchase-Backend/actions/workflows/ci.yml/badge.svg)](https://github.com/kingly5556/Stock-Purchase-Backend/actions/workflows/ci.yml)
+
+![Purchase order partially received](https://raw.githubusercontent.com/kingly5556/K-ERP/main/docs/images/stock-po-detail.png)
+
 REST API for inventory/stock management and purchase orders. Runs as a standalone
 service behind ERPHUB's reverse proxy — see `AGENTS.md` and the `K-ERPHub` repo's
 `README.md` for the gateway/auth contract. This service **never** logs users in;
 it only verifies the JWT ERPHUB forwards.
+
+## What it does
+
+Keeps track of products and how many are in stock, and runs the buying process: create a purchase
+order, get it approved when it is over 50,000 THB, send it to the supplier, and receive the goods
+(in one go or in parts). Every receipt is sent to Accounting automatically and exactly once.
 
 ## Local development
 
@@ -83,3 +95,10 @@ ledger's concurrency guarantee (`SELECT ... FOR UPDATE` in
 `inventory.service.ts`) needs a real Postgres instance to exercise properly —
 add an integration test against the Docker Postgres above before relying on
 it in production.
+
+## How I built this
+
+I designed the architecture, the data model and the business rules, and wrote them down as specs
+(`AGENTS.md`) before any code. I used AI coding assistants to generate much of the implementation,
+then reviewed it, ran and extended the tests, and fixed what was wrong. I can walk through any part
+of the code and explain why it is built that way. More in the [K-ERP overview](https://github.com/kingly5556/K-ERP#how-i-built-this).
